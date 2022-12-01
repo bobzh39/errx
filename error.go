@@ -33,15 +33,6 @@ func WithAppendMsg(fn func(string) string) Option {
 	}
 }
 
-// WithGRPCCode set a custom grpc code if the st is a GRPCError
-func WithGRPCCode(code uint32) Option {
-	return func(st StackTraceError) {
-		if grpcError, ok := st.(GRPCError); ok {
-			grpcError.SetGRPCCode(code)
-		}
-	}
-}
-
 // WithTips create an error by ErrorFactory and no stack log.
 // could be used WithCode WithHttpCode to define a biz code
 func WithTips(tips string, opt ...Option) error {
@@ -108,13 +99,6 @@ type (
 		FilterStackTrace func(*StackTrace)
 	}
 
-	// GRPCError grpc code interface
-	GRPCError interface {
-		StackTraceError
-		// GRPCCode return a GRPCCode
-		GRPCCode() uint32
-		SetGRPCCode(uint32)
-	}
 	// HttpError http error 自定义code
 	HttpError interface {
 		StackTraceError
@@ -262,15 +246,10 @@ func BuildStackTrace(end, start int, err error) string {
 				pkgErr, ok := causerErr.(stackTracer)
 				if ok {
 					// 提取每个error的栈的第一帧
-					//all = append(all, pkgErr.StackTrace()[:end]...)
-					//all = append(all, pkgErr.StackTrace()...)
 					all = StackTrace(pkgErr.StackTrace())
 				}
 			}
-			//all.Reverse()
-			// 补充当前的堆栈
-			//all = append(all, tracerErr.StackTrace()[start:]...)
-			//all = append(all, tracerErr.StackTrace()...)
+
 			if all == nil {
 				all = StackTrace(tracerErr.StackTrace()[3:])
 			}

@@ -26,18 +26,35 @@ func LoadGRPCError() {
 	}
 }
 
+// GRPCError grpc code interface
+type GRPCError interface {
+	errx.StackTraceError
+	// GRPCCode return a GRPCCode
+	GRPCCode() codes.Code
+	SetGRPCCode(code codes.Code)
+}
+
+// WithGRPCCode set a custom grpc code if the st is a GRPCError
+func WithGRPCCode(code codes.Code) errx.Option {
+	return func(st errx.StackTraceError) {
+		if grpcError, ok := st.(GRPCError); ok {
+			grpcError.SetGRPCCode(code)
+		}
+	}
+}
+
 // GRPCStackTraceError grpc error
 type GRPCStackTraceError struct {
 	*errx.DefaultStackTraceError
 	grpcCode codes.Code
 }
 
-func (g *GRPCStackTraceError) GRPCCode() uint32 {
-	return uint32(g.grpcCode)
+func (g *GRPCStackTraceError) GRPCCode() codes.Code {
+	return g.grpcCode
 }
 
-func (g *GRPCStackTraceError) SetGRPCCode(code uint32) {
-	g.grpcCode = codes.Code(code)
+func (g *GRPCStackTraceError) SetGRPCCode(code codes.Code) {
+	g.grpcCode = code
 }
 
 // GRPCStatus grpc status code返回
