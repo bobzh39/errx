@@ -1,8 +1,10 @@
 package errx
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -178,9 +180,13 @@ func (d *DefaultStackTraceError) Error() string {
 	var out strings.Builder
 	out.WriteString("tips: ")
 	out.WriteString(d.tips)
-	out.WriteString("\n")
-	out.WriteString("error: ")
-	out.WriteString(d.ErrorMsg())
+	errorMsg := d.ErrorMsg()
+	if errorMsg == "" {
+		out.WriteString("\n")
+		out.WriteString("error: ")
+		out.WriteString(errorMsg)
+	}
+
 	out.WriteString(BuildStackTrace(1, 3, d.err))
 
 	return out.String()
@@ -280,4 +286,18 @@ func BuildStack(err error, msg string) (error, bool) {
 		}
 	}
 	return err, false
+}
+
+// PanicTrace 用于panic recover返回的堆栈信息，比如常见的使用goroutine时的recover
+func PanicTrace(err interface{}) string {
+	buf := new(bytes.Buffer)
+	_, _ = fmt.Fprintf(buf, "%v\n", err)
+	for i := 1; ; i++ {
+		pc, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		_, _ = fmt.Fprintf(buf, "%s:%d (0x%x)\n", file, line, pc)
+	}
+	return buf.String()
 }

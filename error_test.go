@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,18 @@ func do() error {
 	}
 
 	return nil
+}
+
+func panic1() {
+	panic2()
+}
+
+func panic2() {
+	panic3()
+}
+
+func panic3() {
+	panic("go routines panic")
 }
 
 func read() error {
@@ -75,6 +88,7 @@ func TestSameErr(t *testing.T) {
 func TestFilter(t *testing.T) {
 	Config.FilterStackTrace = func(trace *StackTrace) {
 		var removes []errors.Frame
+		trace.Reverse()
 		for i := range *trace {
 			pc := runtime.FuncForPC(uintptr((*trace)[i]))
 			if pc == nil {
@@ -93,6 +107,19 @@ func TestFilter(t *testing.T) {
 	}
 	err := read()
 	t.Log(err)
+}
+
+func TestPanicTrace(t *testing.T) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Log(PanicTrace(r))
+			}
+		}()
+		panic1()
+	}()
+
+	time.Sleep(5 * time.Second)
 }
 
 func TestErrConfig(t *testing.T) {
