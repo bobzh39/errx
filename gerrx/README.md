@@ -6,4 +6,8 @@ go get github.com/bobzh39/errx/gerrx
 
 // 加载使用GRPC error
 gerrx.LoadGRPCError()
+// 在使用
+errx.Wrap(err)
+
+errx.WithTips(msg)
 ```
