@@ -83,7 +83,8 @@ var (
 	Config = ErrorConfig{
 		DefaultTips:     "服务器繁忙",
 		DefaultCode:     "InternalError",
-		DefaultHttpCode: http.StatusOK,
+		DefaultHttpCode: http.StatusBadRequest,
+		Skip:            3,
 	}
 
 	ErrorFactory = New
@@ -97,6 +98,7 @@ type (
 		DefaultCode     string
 		DefaultHttpCode int
 		DefaultGRPCCode uint32
+		Skip            int
 		// filter stack func
 		FilterStackTrace func(*StackTrace)
 	}
@@ -181,13 +183,13 @@ func (d *DefaultStackTraceError) Error() string {
 	out.WriteString("tips: ")
 	out.WriteString(d.tips)
 	errorMsg := d.ErrorMsg()
-	if errorMsg == "" {
+	if errorMsg != "" {
 		out.WriteString("\n")
 		out.WriteString("error: ")
 		out.WriteString(errorMsg)
 	}
 
-	out.WriteString(BuildStackTrace(1, 3, d.err))
+	out.WriteString(BuildStackTrace(Config.Skip, d.err))
 
 	return out.String()
 }
@@ -237,7 +239,7 @@ func (d *DefaultStackTraceError) SetHttpCode(httpCode int) {
 }
 
 // BuildStackTrace build stack trace
-func BuildStackTrace(end, start int, err error) string {
+func BuildStackTrace(skip int, err error) string {
 	if err != nil {
 		if tracerErr, ok := err.(stackTracer); ok {
 			var all StackTrace
@@ -257,7 +259,7 @@ func BuildStackTrace(end, start int, err error) string {
 			}
 
 			if all == nil {
-				all = StackTrace(tracerErr.StackTrace()[3:])
+				all = StackTrace(tracerErr.StackTrace()[skip:])
 			}
 			if Config.FilterStackTrace != nil {
 				Config.FilterStackTrace(&all)
