@@ -10,13 +10,14 @@ import (
 )
 
 // LoadGRPCError 使用GRPC error
-func LoadGRPCError() {
+func LoadGRPCError(rpcName string) {
 	errx.Config.DefaultGRPCCode = uint32(codes.Internal)
 	errx.Config.ErrorFactory = func(err error, tips string, withStack bool, opt ...errx.Option) errx.StackTraceError {
 		st := errx.DefaultFactory(err, tips, withStack, opt...)
 		return &GRPCStackTraceError{
 			DefaultStackTraceError: st.(*errx.DefaultStackTraceError),
 			grpcCode:               codes.Code(errx.Config.DefaultGRPCCode),
+			rpcName:                rpcName,
 		}
 	}
 }
@@ -42,6 +43,7 @@ func WithGRPCCode(code codes.Code) errx.Option {
 type GRPCStackTraceError struct {
 	*errx.DefaultStackTraceError
 	grpcCode codes.Code
+	rpcName  string
 }
 
 func (g *GRPCStackTraceError) GRPCCode() codes.Code {
@@ -58,6 +60,7 @@ func (g *GRPCStackTraceError) GRPCStatus() *status.Status {
 	//proto.
 	//proto.m
 	res, err := s.WithDetails(&epb.ResourceInfo{
+		ResourceType: g.rpcName,
 		ResourceName: g.Code(),
 		Description:  g.Error(),
 	})
