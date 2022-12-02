@@ -123,8 +123,8 @@ errx.Config.FilterStackTrace = func(trace *errx.StackTrace){
 #### 堆栈信息过滤
 >  使用trace.Reverse()从栈的倒序过滤，这样更快哦，记得在调用一次Reverse()把堆栈顺序改回来，或者直接倒序循环过滤。
 
-## 自定义错误工厂
-自定义结构体创建错误，至少要实现StackTraceError接口，一般实现HttpError接口处理错误
+## 自定义错误结构体
+通过改变`errx.GlobalErrorFactory`或者`errx.Config.ErrorFactory`的值自定义错误结构体，这个结构体一定要实现StackTraceError接口，一般实现HttpError接口处理错误
 ```go
 
 // customErrorStruct 至少要实现StackTraceError接口
@@ -137,17 +137,26 @@ func (c customErrorStruct) Code() string {}
 func (c customErrorStruct) SetCode(s string) {}
 func (c customErrorStruct) Cause() error {}
 
-// 自定义错误工厂创建
-errx.ErrorFactory = func(err error, msg string, opt ...errx.Option) error {
+
+// 大部分情况我们一般使用ErrorFactory就足够
+errx.Config.ErrorFactory = func(err error, tips string, withStack bool, opt ...errx.Option) errx.StackTraceError{
+return &customErrorStruct{}
+}
+
+// 自定义全局错误创建
+// 全局的需要自己处理错误逻辑
+errx.GlobalErrorFactory = func(err error, msg string, opt ...errx.Option) error {
    return &customErrorStruct{}
 }
+
+
 ```
 
 ### Option介绍
 用于每个错误创建时的自定义Code、httpCode, 中间件则可以拿到对应的code设置http的状态码
 ```go
 if err != nil {
-    return errx.WrapMessage(err, "无权限", errx.WithCode("401"),errx.WithHttpCode(401))
+    return errx.WrapMessage(err, "无权限", errx.WithCode("401"), errx.WithHttpCode(401), errx.WithField("roleId","none"))
 }
 ```
 
@@ -165,7 +174,8 @@ go func() {
 }()
 ```
 
-
 ## GRPC错误处理
 使用[gerrx](./gerrx)返回GRPC中的错误，打印堆栈
 
+### 接下来的事情
+- 包装错误时，需要保存错误的参数
