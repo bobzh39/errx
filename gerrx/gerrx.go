@@ -12,19 +12,12 @@ import (
 // LoadGRPCError 使用GRPC error
 func LoadGRPCError() {
 	errx.Config.DefaultGRPCCode = uint32(codes.Internal)
-	errx.Config.Skip = 4
-	errx.ErrorFactory = func(err error, msg string, opt ...errx.Option) error {
-		stackTrace := errx.New(err, msg, opt...)
-		grpcErr := &GRPCStackTraceError{
-			DefaultStackTraceError: stackTrace.(*errx.DefaultStackTraceError),
+	errx.Config.ErrorFactory = func(err error, tips string, withStack bool, opt ...errx.Option) errx.StackTraceError {
+		st := errx.DefaultFactory(err, tips, withStack, opt...)
+		return &GRPCStackTraceError{
+			DefaultStackTraceError: st.(*errx.DefaultStackTraceError),
 			grpcCode:               codes.Code(errx.Config.DefaultGRPCCode),
 		}
-
-		for i := range opt {
-			opt[i](grpcErr)
-		}
-
-		return grpcErr
 	}
 }
 
