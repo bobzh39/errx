@@ -2,15 +2,29 @@ package errx
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime"
 	"strings"
+	"unsafe"
 
 	"github.com/pkg/errors"
 )
 
-type Option func(StackTraceError)
+const (
+	JSON = iota
+	Text
+)
+
+var (
+	Marshal = json.Marshal
+)
+
+type (
+	Option           func(StackTraceError)
+	ErrorFactoryFunc func(err error, tips string, withStack bool, opt ...Option) StackTraceError
+)
 
 // WithCode set a custom biz code
 func WithCode(code string) Option {
@@ -28,47 +42,69 @@ func WithHttpCode(code int) Option {
 	}
 }
 
-// WithAppendMsg append tips content
-func WithAppendMsg(fn func(string) string) Option {
+// WithField append a field
+func WithField(key string, value any) Option {
 	return func(st StackTraceError) {
-		st.AppendMsg(fn)
+		if ctx, ok := st.(FieldContext); ok {
+			ctx.Append(Field(key, value))
+		}
 	}
 }
 
-// WithTips create an error by ErrorFactory and no stack log.
-// could be used WithCode WithHttpCode to define a biz code
-func WithTips(tips string, opt ...Option) error {
-	return ErrorFactory(nil, tips, opt...)
+// WithFields append fields
+func WithFields(fields ...LogField) Option {
+	return func(st StackTraceError) {
+		if ctx, ok := st.(FieldContext); ok {
+			ctx.Append(fields...)
+		}
+	}
 }
 
-// Wrap create an error by ErrorFactory
+// WithTips create an error by GlobalErrorFactory and no stack log.
+// could be used WithCode WithHttpCode to define a biz code
+func WithTips(tips string, opt ...Option) error {
+	return GlobalErrorFactory(nil, tips, opt...)
+}
+
+// Wrap create an error by GlobalErrorFactory
 // could be used WithCode WithHttpCode to define a biz code
 // if err is StackTraceError will append tips and return
 func Wrap(err error, opt ...Option) error {
-	return ErrorFactory(err, Config.DefaultTips, opt...)
-
+	return GlobalErrorFactory(err, Config.DefaultTips, opt...)
 }
 
-// WrapMessage create an error by ErrorFactory
+// WrapMessage create an error by GlobalErrorFactory
 // could be used WithCode WithHttpCode to define a biz code
 // if err is StackTraceError will append the tips and return
 func WrapMessage(err error, tips string, opt ...Option) error {
-	return ErrorFactory(err, tips, opt...)
+	return GlobalErrorFactory(err, tips, opt...)
 }
 
 // New create a StackTraceError
 // when err is nil, it will not stack trace
 func New(err error, tips string, opt ...Option) error {
-	err, ok := BuildStack(err, tips)
-	if ok {
-		return err
+	withStack := false
+	if err != nil {
+		if stackTracerError, ok := err.(StackTraceError); ok {
+			// 注意：stackTracerError最好不要嵌套 stackTracerError
+			// 不然在调用ErrorMsg()方法时，会返回上一个的stackTracerError.Error()的堆栈信息
+			// 导致错误消息过多，不好识别
+			stackTracerError.AppendMsg(func(originMsg string) string {
+				return originMsg + ": " + tips
+			})
+
+			return stackTracerError
+		} else if _, ok := err.(stackTracer); !ok {
+			err = errors.WithStack(err)
+			withStack = true
+		}
 	}
 
-	st := &DefaultStackTraceError{
-		tips:     tips,
-		code:     Config.DefaultCode,
-		httpCode: Config.DefaultHttpCode,
-		err:      err,
+	var st StackTraceError
+	if Config.ErrorFactory != nil {
+		st = Config.ErrorFactory(err, tips, withStack, opt...)
+	} else {
+		st = DefaultFactory(err, tips, withStack, opt...)
 	}
 
 	for i := range opt {
@@ -80,15 +116,31 @@ func New(err error, tips string, opt ...Option) error {
 
 // Config error global ErrorConfig
 var (
+	_                  StackTraceError = (*DefaultStackTraceError)(nil)
+	Config             ErrorConfig
+	GlobalErrorFactory = New
+)
+
+// DefaultFactory default StackTraceError factory
+func DefaultFactory(err error, tips string, withStack bool, o ...Option) StackTraceError {
+	return &DefaultStackTraceError{
+		tips:      tips,
+		code:      Config.DefaultCode,
+		httpCode:  Config.DefaultHttpCode,
+		err:       err,
+		withStack: withStack,
+	}
+}
+
+func init() {
 	Config = ErrorConfig{
 		DefaultTips:     "服务器繁忙",
 		DefaultCode:     "InternalError",
 		DefaultHttpCode: http.StatusBadRequest,
-		Skip:            3,
+		Skip:            2,
+		ErrorFormat:     Text,
 	}
-
-	ErrorFactory = New
-)
+}
 
 type (
 	// ErrorConfig error global ErrorConfig
@@ -99,8 +151,10 @@ type (
 		DefaultHttpCode int
 		DefaultGRPCCode uint32
 		Skip            int
+		ErrorFormat     int
 		// filter stack func
 		FilterStackTrace func(*StackTrace)
+		ErrorFactory     ErrorFactoryFunc
 	}
 
 	// HttpError http error 自定义code
@@ -111,6 +165,7 @@ type (
 	}
 	// StackTraceError 有堆栈错误的error，包括自定义biz code
 	StackTraceError interface {
+		FieldContext
 		error
 		// Msg 给到客户端的提示消息
 		Msg() string
@@ -172,6 +227,9 @@ type DefaultStackTraceError struct {
 	errMsg   string
 	httpCode int
 	err      error
+	// withStack err是否为内部创建的with stack
+	withStack bool
+	fields    map[string]any
 }
 
 // Error implements the error interface
@@ -179,19 +237,45 @@ type DefaultStackTraceError struct {
 // error: %v
 // stack trace...
 func (d *DefaultStackTraceError) Error() string {
-	var out strings.Builder
-	out.WriteString("tips: ")
-	out.WriteString(d.tips)
-	errorMsg := d.ErrorMsg()
-	if errorMsg != "" {
-		out.WriteString("\n")
-		out.WriteString("error: ")
-		out.WriteString(errorMsg)
+	trace := BuildStackTrace(func(trace StackTrace) StackTrace {
+		if d.withStack {
+			return trace[Config.Skip:]
+		}
+		return trace
+	}, d.err)
+
+	if Config.ErrorFormat == Text {
+		var out strings.Builder
+		out.WriteString("tips: ")
+		out.WriteString(d.tips)
+		errorMsg := d.ErrorMsg()
+		if errorMsg != "" {
+			out.WriteString("\n")
+			out.WriteString("error: ")
+			out.WriteString(errorMsg)
+		}
+		if len(d.fields) > 0 {
+			for k, v := range d.fields {
+				out.WriteString(fmt.Sprintf("\t%s=%v", k, v))
+			}
+		}
+
+		out.WriteString(trace)
+
+		return out.String()
 	}
 
-	out.WriteString(BuildStackTrace(Config.Skip, d.err))
+	jsonMap := make(map[string]any, 4)
+	jsonMap["tips"] = d.tips
+	jsonMap["error"] = d.ErrorMsg()
+	jsonMap["fields"] = d.fields
+	jsonMap["calls"] = trace
+	data, err := Marshal(jsonMap)
+	if err != nil {
+		return fmt.Sprintf("%+v", errors.Wrap(err, "marshal StackTraceError error"))
+	}
 
-	return out.String()
+	return *(*string)(unsafe.Pointer(&data))
 }
 
 func (d *DefaultStackTraceError) Msg() string {
@@ -238,12 +322,30 @@ func (d *DefaultStackTraceError) SetHttpCode(httpCode int) {
 	d.httpCode = httpCode
 }
 
+func (d *DefaultStackTraceError) Append(fields ...LogField) {
+	if len(fields) == 0 {
+		return
+	}
+
+	if d.fields == nil {
+		d.fields = make(map[string]any, len(d.fields))
+	}
+	for i := range fields {
+		d.fields[fields[i].key] = fields[i].value
+	}
+}
+
 // BuildStackTrace build stack trace
-func BuildStackTrace(skip int, err error) string {
+func BuildStackTrace(skip func(StackTrace) StackTrace, err error) string {
+	if skip == nil {
+		skip = func(trace StackTrace) StackTrace { return trace }
+	}
 	if err != nil {
 		if tracerErr, ok := err.(stackTracer); ok {
 			var all StackTrace
 			causerErr := err
+
+			// pkg/errors 嵌套多层处理
 			for causerErr != nil {
 				cause, ok := causerErr.(causer)
 				if !ok {
@@ -253,14 +355,15 @@ func BuildStackTrace(skip int, err error) string {
 				causerErr = cause.Cause()
 				pkgErr, ok := causerErr.(stackTracer)
 				if ok {
-					// 提取每个error的栈的第一帧
+					// 提取最深的堆栈
 					all = StackTrace(pkgErr.StackTrace())
 				}
 			}
 
 			if all == nil {
-				all = StackTrace(tracerErr.StackTrace()[skip:])
+				all = skip(StackTrace(tracerErr.StackTrace()))
 			}
+
 			if Config.FilterStackTrace != nil {
 				Config.FilterStackTrace(&all)
 			}
@@ -272,26 +375,8 @@ func BuildStackTrace(skip int, err error) string {
 	return ""
 }
 
-// BuildStack build a stack error
-func BuildStack(err error, msg string) (error, bool) {
-	if err != nil {
-		if stackTracerError, ok := err.(StackTraceError); ok {
-			// 注意：stackTracerError最好不要嵌套 stackTracerError
-			// 不然在调用ErrorMsg()方法时，会返回上一个的stackTracerError.Error()的堆栈信息
-			// 导致错误消息过多，不好识别
-			stackTracerError.AppendMsg(func(originMsg string) string {
-				return originMsg + ": " + msg
-			})
-			return stackTracerError, true
-		} else if _, ok := err.(stackTracer); !ok {
-			err = errors.WithStack(err)
-		}
-	}
-	return err, false
-}
-
 // PanicTrace 用于panic recover返回的堆栈信息，比如常见的使用goroutine时的recover
-func PanicTrace(err interface{}) string {
+func PanicTrace(err any) string {
 	buf := new(bytes.Buffer)
 	_, _ = fmt.Fprintf(buf, "%v\n", err)
 	for i := 1; ; i++ {
