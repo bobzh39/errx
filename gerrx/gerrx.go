@@ -11,6 +11,8 @@ import (
 
 // LoadGRPCError 使用GRPC error
 func LoadGRPCError() {
+	errx.Config.DefaultGRPCCode = uint32(codes.Internal)
+	errx.Config.Skip = 4
 	errx.ErrorFactory = func(err error, msg string, opt ...errx.Option) error {
 		stackTrace := errx.New(err, msg, opt...)
 		grpcErr := &GRPCStackTraceError{
