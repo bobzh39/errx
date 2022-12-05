@@ -60,8 +60,8 @@ func (g *GRPCStackTraceError) GRPCStatus() *status.Status {
 	//proto.
 	//proto.m
 	res, err := s.WithDetails(&epb.ResourceInfo{
-		ResourceType: g.rpcName,
-		ResourceName: g.Code(),
+		ResourceName: g.rpcName,
+		ResourceType: g.Code(),
 		Description:  g.Error(),
 	})
 
